@@ -39,6 +39,8 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.net.URLConnection;
 import java.net.URLStreamHandler;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.security.CodeSource;
 import java.security.ProtectionDomain;
 import java.text.DecimalFormat;
@@ -53,71 +55,59 @@ public class Bootstrapper {
     private static final File DATA_DIR = new File(System.getProperty("user.home") + File.separator + ".helios");
     private static final long MEGABYTE = 1024L * 1024L;
     private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("#.00");
+    private static final String LATEST_JAR = "https://ci.samczsun.com/job/Helios/lastSuccessfulBuild/artifact/target/helios-0.0.1.jar";
+
+    static final File BOOTSTRAPPER_FILE;
+    private static final File IMPL_FILE;
+
+    static {
+        ProtectionDomain protectionDomain = Bootstrapper.class.getProtectionDomain();
+        if (protectionDomain == null) {
+            JOptionPane.showMessageDialog(null, "Error: Could not locate Bootstrapper. (ProtectionDomain was null)");
+            throw new RuntimeException();
+        }
+        CodeSource codeSource = protectionDomain.getCodeSource();
+        if (codeSource == null) {
+            JOptionPane.showMessageDialog(null, "Error: Could not locate Bootstrapper. (CodeSource was null)");
+            throw new RuntimeException();
+        }
+        URL url = codeSource.getLocation();
+        if (url == null) {
+            JOptionPane.showMessageDialog(null, "Error: Could not locate Bootstrapper. (Location was null)");
+            throw new RuntimeException();
+        }
+        File file = new File(url.getFile());
+        if (file.isDirectory()) {
+            if (!Boolean.getBoolean("com.heliosdecompiler.isDebugging")) {
+                JOptionPane.showMessageDialog(null, "Error: Could not locate Bootstrapper. (File is directory)");
+                throw new RuntimeException(file.getAbsolutePath());
+            } else {
+                System.out.println("Warning: Could not locate bootstrapper but com.heliosdecompiler.isDebugging was set to true");
+            }
+        } else if (!file.exists() || !file.canRead() || !file.canWrite()) {
+            JOptionPane.showMessageDialog(null, "Error: Could not locate Bootstrapper. (File does not exist)");
+            throw new RuntimeException();
+        }
+        BOOTSTRAPPER_FILE = file;
+        System.getProperties().put("com.heliosdecompiler.bootstrapperFile", BOOTSTRAPPER_FILE);
+
+        if (!DATA_DIR.exists() && !DATA_DIR.mkdirs()) {
+            JOptionPane.showMessageDialog(null, "Error: Could not create data directory (" + DATA_DIR.getAbsolutePath() + ")");
+            throw new RuntimeException();
+        }
+
+        IMPL_FILE = new File(DATA_DIR, "helios.jar");
+    }
 
     public static void main(String[] args) {
         try {
-            if (!DATA_DIR.exists() && !DATA_DIR.mkdirs())
-                throw new IllegalArgumentException("Could not create data dir");
-
             if (args.length == 0) {
                 byte[] data = loadSWTLibrary();
                 System.out.println("Loaded SWT Library");
-
                 int buildNumber = loadHelios();
                 System.out.println("Running Helios version " + buildNumber);
 
-                Thread updaterThread = new Thread() {
-                    public void run() {
-                        try {
-                            URL latestVersion = new URL("https://ci.samczsun.com/job/Helios/lastStableBuild/buildNumber");
-                            HttpURLConnection connection = (HttpURLConnection) latestVersion.openConnection();
-                            if (connection.getResponseCode() == 200) {
-                                ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-                                copy(connection.getInputStream(), outputStream);
-                                String version = new String(outputStream.toByteArray(), "UTF-8");
-                                System.out.println("Latest version: " + version);
-                                int intVersion = Integer.parseInt(version);
-                                if (intVersion > buildNumber) {
-                                    int select = JOptionPane.showConfirmDialog(null, "There are " + (intVersion - buildNumber) + " patches available. Update?", null, JOptionPane.YES_NO_OPTION);
-                                    if (select == JOptionPane.YES_OPTION) {
-                                        ProtectionDomain protectionDomain = Bootstrapper.class.getProtectionDomain();
-                                        if (protectionDomain == null) {
-                                            JOptionPane.showMessageDialog(null, "Error 1: Could not determine location of Helios. Please run with -forceupdate");
-                                            return;
-                                        }
-                                        CodeSource codeSource = protectionDomain.getCodeSource();
-                                        if (codeSource == null) {
-                                            JOptionPane.showMessageDialog(null, "Error 2: Could not determine location of Helios. Please run with -forceupdate");
-                                            return;
-                                        }
-                                        URL url = codeSource.getLocation();
-                                        if (url == null) {
-                                            JOptionPane.showMessageDialog(null, "Error 3: Could not determine location of Helios. Please run with -forceupdate");
-                                            return;
-                                        }
-                                        File file = new File(url.getFile());
-                                        if (file.isDirectory() || !file.exists() || !file.canRead() || !file.canWrite()) {
-                                            JOptionPane.showMessageDialog(null, "Error 4: Could not determine location of Helios. Please run with -forceupdate");
-                                            return;
-                                        }
-                                        Runtime.getRuntime().exec(new String[]{
-                                                "java",
-                                                "-jar",
-                                                file.getAbsolutePath(),
-                                                "-forceupdate"
-                                        });
-                                        System.exit(0);
-                                    }
-                                }
-                            } else {
-                                throw new IOException(connection.getResponseCode() + ": " + connection.getResponseMessage());
-                            }
-                        } catch (Throwable t) {
-                            displayError(t);
-                        }
-                    }
-                };
-                updaterThread.start();
+                new Thread(new UpdaterTask(buildNumber)).start();
 
                 URL.setURLStreamHandlerFactory(protocol -> { //JarInJar!
                     if (protocol.equals("swt")) {
@@ -141,22 +131,46 @@ public class Bootstrapper {
                     return null;
                 });
 
-                ClassLoader classLoader = Bootstrapper.class.getClassLoader();
-                Method method = URLClassLoader.class.getDeclaredMethod("addURL", URL.class);
-                method.setAccessible(true);
-                method.invoke(classLoader, new URL("swt://load"));
-
-
-                File heliosImpl = new File(DATA_DIR, "helios.jar");
-                method.invoke(classLoader, heliosImpl.toURI().toURL());
-
-                Class<?> bootloader = Class.forName("com.samczsun.helios.bootloader.Bootloader");
+                ClassLoader classLoader = new URLClassLoader(new URL[]{new URL("swt://load"), new File(DATA_DIR, "helios.jar").toURI().toURL()});
+                Class<?> bootloader = Class.forName("com.samczsun.helios.bootloader.Bootloader", false, classLoader);
                 bootloader.getMethod("main", String[].class).invoke(null, new Object[]{new String[0]});
             } else {
                 if (args[0].equals("-forceupdate")) {
+                    File backupFile = new File(DATA_DIR, "helios.jar.bak");
+                    if (!IMPL_FILE.exists()) {
+                        throw new RuntimeException("No Helios implementation found");
+                    }
+                    if (IMPL_FILE.isDirectory()) {
+                        throw new RuntimeException("Helios implementation is directory");
+                    }
+                    if (!IMPL_FILE.canRead()) {
+                        throw new RuntimeException("Read permissions denied for Helios implementation");
+                    }
+                    if (!IMPL_FILE.canWrite()) {
+                        throw new RuntimeException("Write permissions denied for Helios implementation");
+                    }
+                    if (backupFile.exists()) {
+                        if (!backupFile.canRead()) {
+                            throw new RuntimeException("Read permissions denied for backup file");
+                        }
+                        if (!backupFile.canWrite()) {
+                            throw new RuntimeException("Write permissions denied for backup file");
+                        }
+                        if (!backupFile.delete()) {
+                            throw new RuntimeException("Could not delete backup file");
+                        }
+                    }
+                    try {
+                        Files.copy(IMPL_FILE.toPath(), backupFile.toPath());
+                    } catch (IOException exception) {
+                        // We're going to wrap it so end users know what went wrong
+                        throw new IOException("Could not back up Helios implementation", exception);
+                    }
                     URL latestVersion = new URL("https://ci.samczsun.com/job/Helios/lastStableBuild/buildNumber");
                     HttpURLConnection connection = (HttpURLConnection) latestVersion.openConnection();
                     if (connection.getResponseCode() == 200) {
+                        boolean aborted = false;
+
                         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
                         copy(connection.getInputStream(), outputStream);
                         String version = new String(outputStream.toByteArray(), "UTF-8");
@@ -198,6 +212,9 @@ public class Bootstrapper {
                                                 }
                                             }
                                         }
+                                    } else {
+                                        JOptionPane.showMessageDialog(null, "Server returned response code " + con.getResponseCode() + " " + con.getResponseMessage() + "\nAborting patch process", null, JOptionPane.INFORMATION_MESSAGE);
+                                        aborted = true;
                                     }
                                 }
                             } else {
@@ -205,35 +222,27 @@ public class Bootstrapper {
                             }
                         }
 
-
-                        int buildNumber = loadHelios();
-                        System.out.println("Running Helios version " + buildNumber);
-                        JOptionPane.showMessageDialog(null, "Updated to Helios version " + buildNumber + "!");
-                        ProtectionDomain protectionDomain = Bootstrapper.class.getProtectionDomain();
-                        if (protectionDomain == null) {
-                            JOptionPane.showMessageDialog(null, "Error 1: Could not determine location of Helios. Please run with -forceupdate");
-                            return;
+                        if (!aborted) {
+                            int buildNumber = loadHelios();
+                            System.out.println("Running Helios version " + buildNumber);
+                            JOptionPane.showMessageDialog(null, "Updated Helios to version " + buildNumber + "!");
+                            Runtime.getRuntime().exec(new String[]{
+                                    "java",
+                                    "-jar",
+                                    BOOTSTRAPPER_FILE.getAbsolutePath()
+                            });
+                        } else {
+                            try {
+                                Files.copy(backupFile.toPath(), IMPL_FILE.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                            } catch (IOException exception) {
+                                // We're going to wrap it so end users know what went wrong
+                                throw new IOException("Critical Error! Could not restore Helios implementation to original copy" +
+                                        "Try relaunching the Bootstrapper. If that doesn't work open a GitHub issue with details", exception);
+                            }
                         }
-                        CodeSource codeSource = protectionDomain.getCodeSource();
-                        if (codeSource == null) {
-                            JOptionPane.showMessageDialog(null, "Error 2: Could not determine location of Helios. Please run with -forceupdate");
-                            return;
-                        }
-                        URL url = codeSource.getLocation();
-                        if (url == null) {
-                            JOptionPane.showMessageDialog(null, "Error 3: Could not determine location of Helios. Please run with -forceupdate");
-                            return;
-                        }
-                        File file = new File(url.getFile());
-                        if (file.isDirectory() || !file.exists() || !file.canRead() || !file.canWrite()) {
-                            JOptionPane.showMessageDialog(null, "Error 4: Could not determine location of Helios. Please run with -forceupdate");
-                            return;
-                        }
-                        Runtime.getRuntime().exec(new String[]{
-                                "java",
-                                "-jar",
-                                file.getAbsolutePath()
-                        });
+                        System.exit(0);
+                    } else {
+                        throw new IOException(connection.getResponseCode() + ": " + connection.getResponseMessage());
                     }
                 }
             }
@@ -244,14 +253,13 @@ public class Bootstrapper {
     }
 
     private static int loadHelios() throws IOException {
-        System.out.println("Loading Helios implementation");
+        System.out.println("Finding Helios implementation");
 
-        int buildNumber = 0;
+        int buildNumber = -1;
 
-        File heliosImpl = new File(DATA_DIR, "helios.jar");
-        boolean needsToDownload = !heliosImpl.exists();
+        boolean needsToDownload = !IMPL_FILE.exists();
         if (!needsToDownload) {
-            try (JarFile jarFile = new JarFile(heliosImpl)) {
+            try (JarFile jarFile = new JarFile(IMPL_FILE)) {
                 ZipEntry entry = jarFile.getEntry("META-INF/MANIFEST.MF");
                 if (entry == null) {
                     needsToDownload = true;
@@ -269,12 +277,11 @@ public class Bootstrapper {
             }
         }
         if (needsToDownload) {
-            URL latestJar = new URL("https://ci.samczsun.com/job/Helios/lastSuccessfulBuild/artifact/target/helios-0.0.1.jar");
-            System.out.println("Downloading latest Helios");
+            URL latestJar = new URL(LATEST_JAR);
+            System.out.println("Downloading latest Helios implementation");
 
-            FileOutputStream out = new FileOutputStream(heliosImpl);
-            HttpURLConnection connection =
-                    (HttpURLConnection) latestJar.openConnection();
+            FileOutputStream out = new FileOutputStream(IMPL_FILE);
+            HttpURLConnection connection = (HttpURLConnection) latestJar.openConnection();
             if (connection.getResponseCode() == 200) {
                 int contentLength = connection.getContentLength();
                 if (contentLength > 0) {
@@ -321,8 +328,7 @@ public class Bootstrapper {
                                 textArea.setText("Downloaded " + bytesToMeg(total.get()) + "MB/" + bytesToMeg(contentLength) + "MB");
                                 try {
                                     Thread.sleep(100);
-                                } catch (InterruptedException e) {
-                                    e.printStackTrace();
+                                } catch (InterruptedException ignored) {
                                 }
                             }
                             frame.dispose();
@@ -335,9 +341,13 @@ public class Bootstrapper {
                         total.addAndGet(amnt);
                     }
                     stop.set(true);
+                    return loadHelios();
+                } else {
+                    throw new IOException("Content-Length set to " + connection.getContentLength());
                 }
+            } else {
+                throw new IOException(connection.getResponseCode() + ": " + connection.getResponseMessage());
             }
-            return loadHelios();
         }
         return buildNumber;
     }
@@ -419,6 +429,7 @@ public class Bootstrapper {
                     throw new IOException("Could not create new file");
                 }
             } catch (IOException exception) {
+                JOptionPane.showMessageDialog(null, "Failed to save SWT to cache. If this persists please open a GitHub issue");
                 System.out.println("Failed to write to saved file");
                 exception.printStackTrace(System.out);
             }
@@ -426,7 +437,7 @@ public class Bootstrapper {
         return data;
     }
 
-    private static void displayError(Throwable t) {
+    static void displayError(Throwable t) {
         t.printStackTrace();
         StringWriter writer = new StringWriter();
         t.printStackTrace(new PrintWriter(writer));
@@ -448,7 +459,7 @@ public class Bootstrapper {
         return null;
     }
 
-    private static void copy(InputStream input, OutputStream output) throws IOException {
+    static void copy(InputStream input, OutputStream output) throws IOException {
         byte[] buffer = new byte[4096];
         int n;
         while ((n = input.read(buffer)) != -1) {
