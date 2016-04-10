@@ -31,7 +31,7 @@ class UpdaterTask implements Runnable {
                                 "java",
                                 "-jar",
                                 Bootstrapper.BOOTSTRAPPER_FILE.getAbsolutePath(),
-                                "-forceupdate"
+                                "--forceupdate"
                         });
                         System.exit(0);
                     }
