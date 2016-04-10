@@ -101,40 +101,7 @@ public class Bootstrapper {
 
     public static void main(String[] args) {
         try {
-            if (args.length == 0) {
-                byte[] data = loadSWTLibrary();
-                System.out.println("Loaded SWT Library");
-                int buildNumber = loadHelios();
-                System.out.println("Running Helios version " + buildNumber);
-
-                new Thread(new UpdaterTask(buildNumber)).start();
-
-                URL.setURLStreamHandlerFactory(protocol -> { //JarInJar!
-                    if (protocol.equals("swt")) {
-                        return new URLStreamHandler() {
-                            protected URLConnection openConnection(URL u) {
-                                return new URLConnection(u) {
-                                    public void connect() {
-                                    }
-
-                                    public InputStream getInputStream() {
-                                        return new ByteArrayInputStream(data);
-                                    }
-                                };
-                            }
-
-                            protected void parseURL(URL u, String spec, int start, int limit) {
-                                // Don't parse or it's too slow
-                            }
-                        };
-                    }
-                    return null;
-                });
-
-                ClassLoader classLoader = new URLClassLoader(new URL[]{new URL("swt://load"), new File(DATA_DIR, "helios.jar").toURI().toURL()});
-                Class<?> bootloader = Class.forName("com.samczsun.helios.bootloader.Bootloader", false, classLoader);
-                bootloader.getMethod("main", String[].class).invoke(null, new Object[]{new String[0]});
-            } else {
+            if (args.length == 1) {
                 if (args[0].equals("-forceupdate")) {
                     File backupFile = new File(DATA_DIR, "helios.jar.bak");
                     if (!IMPL_FILE.exists()) {
@@ -245,6 +212,50 @@ public class Bootstrapper {
                         throw new IOException(connection.getResponseCode() + ": " + connection.getResponseMessage());
                     }
                 }
+            } else {
+                String[] newArgs;
+                if (args.length == 0) {
+                    newArgs = new String[0];
+                } else {
+                    if (args[0].equals("-open")) {
+                        newArgs = new String[args.length - 1];
+                        System.arraycopy(args, 1, newArgs, 0, newArgs.length);
+                    } else {
+                        newArgs = args;
+                    }
+                }
+                byte[] data = loadSWTLibrary();
+                System.out.println("Loaded SWT Library");
+                int buildNumber = loadHelios();
+                System.out.println("Running Helios version " + buildNumber);
+
+                new Thread(new UpdaterTask(buildNumber)).start();
+
+                URL.setURLStreamHandlerFactory(protocol -> { //JarInJar!
+                    if (protocol.equals("swt")) {
+                        return new URLStreamHandler() {
+                            protected URLConnection openConnection(URL u) {
+                                return new URLConnection(u) {
+                                    public void connect() {
+                                    }
+
+                                    public InputStream getInputStream() {
+                                        return new ByteArrayInputStream(data);
+                                    }
+                                };
+                            }
+
+                            protected void parseURL(URL u, String spec, int start, int limit) {
+                                // Don't parse or it's too slow
+                            }
+                        };
+                    }
+                    return null;
+                });
+
+                ClassLoader classLoader = new URLClassLoader(new URL[]{new URL("swt://load"), new File(DATA_DIR, "helios.jar").toURI().toURL()});
+                Class<?> bootloader = Class.forName("com.samczsun.helios.bootloader.Bootloader", false, classLoader);
+                bootloader.getMethod("main", String[].class).invoke(null, new Object[]{newArgs});
             }
         } catch (Throwable t) {
             displayError(t);
