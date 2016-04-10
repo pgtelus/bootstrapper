@@ -228,6 +228,7 @@ public class Bootstrapper {
                 System.out.println("Loaded SWT Library");
                 int buildNumber = loadHelios();
                 System.out.println("Running Helios version " + buildNumber);
+                System.setProperty("com.heliosdecompiler.buildNumber", String.valueOf(buildNumber));
 
                 new Thread(new UpdaterTask(buildNumber)).start();
 
