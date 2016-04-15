@@ -54,6 +54,8 @@ import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.net.HttpURLConnection;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.net.URLConnection;
@@ -125,19 +127,29 @@ public class Bootstrapper {
             JOptionPane.showMessageDialog(null, "Error: Could not locate Bootstrapper. (Location was null)");
             throw new RuntimeException();
         }
-        File file = new File(url.getFile());
-        if (file.isDirectory()) {
-            if (!Boolean.getBoolean("com.heliosdecompiler.isDebugging")) {
-                JOptionPane.showMessageDialog(null, "Error: Could not locate Bootstrapper. (File is directory)");
-                throw new RuntimeException(file.getAbsolutePath());
-            } else {
-                System.out.println("Warning: Could not locate bootstrapper but com.heliosdecompiler.isDebugging was set to true");
+        try {
+            URI uri = url.toURI();
+            File file = new File(uri.getPath());
+            System.out.println(file.getAbsolutePath());
+            if (file.isDirectory()) {
+                if (!Boolean.getBoolean("com.heliosdecompiler.isDebugging")) {
+                    JOptionPane.showMessageDialog(null, "Error: Could not locate Bootstrapper. (File is directory)");
+                    throw new RuntimeException(file.getAbsolutePath());
+                } else {
+                    System.out.println("Warning: Could not locate bootstrapper but com.heliosdecompiler.isDebugging was set to true");
+                }
+            } else if (!file.exists()) {
+                JOptionPane.showMessageDialog(null, "Error: Could not locate Bootstrapper. (File does not exist)");
+                throw new RuntimeException();
+            } else if (!file.canRead()) {
+                JOptionPane.showMessageDialog(null, "Error: Could not locate Bootstrapper. (File is not readable)");
+                throw new RuntimeException();
             }
-        } else if (!file.exists() || !file.canRead() || !file.canWrite()) {
-            JOptionPane.showMessageDialog(null, "Error: Could not locate Bootstrapper. (File does not exist)");
+            return file;
+        } catch (URISyntaxException e) {
+            JOptionPane.showMessageDialog(null, "Error: Could not locate Bootstrapper. (URISyntaxException)");
             throw new RuntimeException();
         }
-        return file;
     }
 
     private static Manifest readManifestFromBootstrapper() throws IOException {
