@@ -310,8 +310,8 @@ public class Bootstrapper {
                                     FileOutputStream fileOutputStream = new FileOutputStream(dest);
                                     fileOutputStream.write(byteArrayOutputStream.toByteArray());
                                     fileOutputStream.close();
-                                    File cur = new File(DATA_DIR, "helios.jar");
-                                    File old = new File(DATA_DIR, "helios-" + oldBuildNumber + ".jar");
+                                    File cur = IMPL_FILE;
+                                    File old = new File(IMPL_FILE.getAbsolutePath() + "." + oldBuildNumber);
                                     if (cur.renameTo(old)) {
                                         VcdiffDecoder.decode(old, dest, cur);
                                         old.delete();
