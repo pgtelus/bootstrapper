@@ -17,4 +17,4 @@ The bootstrapper, like all projects under the Helios Decompiler name, is license
 
 # Contributing
 
-Thanks for your interest! Unfortunately, CLAHub is being uncooperative and so contributions currently cannot be accepted
+Thanks for your interest! Please note that you will need to [sign the CLA](https://www.clahub.com/agreements/helios-decompiler/bootstrapper) 
