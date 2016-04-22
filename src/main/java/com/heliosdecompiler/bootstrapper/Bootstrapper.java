@@ -457,6 +457,8 @@ public class Bootstrapper {
                 } else {
                     throw new IOException("Content-Length set to " + connection.getContentLength());
                 }
+            } else if (connection.getResponseCode() == 404) { // Most likely bootstrapper is out of date
+                throw new RuntimeException("Bootstrapper out of date!");
             } else {
                 throw new IOException(connection.getResponseCode() + ": " + connection.getResponseMessage());
             }
