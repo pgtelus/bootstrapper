@@ -76,7 +76,7 @@ import java.util.zip.ZipEntry;
 
 public class Bootstrapper {
     private static final String SWT_VERSION = "4.5.2";
-    private static final String IMPLEMENTATION_VERSION = "0.0.3";
+    private static final String IMPLEMENTATION_VERSION = "0.0.4";
 
     private static final File DATA_DIR = new File(System.getProperty("user.home") + File.separator + ".helios");
     private static final long MEGABYTE = 1024L * 1024L;
@@ -230,7 +230,7 @@ public class Bootstrapper {
                 });
 
                 ClassLoader classLoader = new URLClassLoader(new URL[]{new URL("swt://load"), IMPL_FILE.toURI().toURL()});
-                Class<?> bootloader = Class.forName("com.samczsun.helios.bootloader.Bootloader", false, classLoader);
+                Class<?> bootloader = Class.forName(heliosData.mainClass, false, classLoader);
                 bootloader.getMethod("main", String[].class).invoke(null, new Object[]{forward});
             }
         } catch (Throwable t) {
@@ -375,10 +375,9 @@ public class Bootstrapper {
                 } else {
                     Manifest manifest = new Manifest(jarFile.getInputStream(entry));
                     String ver = manifest.getMainAttributes().getValue("Implementation-Version");
-                    String versionString = manifest.getMainAttributes().getValue("Version");
                     try {
                         data.buildNumber = Integer.parseInt(ver);
-                        data.version = Integer.parseInt(versionString);
+                        data.version =  manifest.getMainAttributes().getValue("Version");
                         data.mainClass = manifest.getMainAttributes().getValue("Main-Class");
                     } catch (NumberFormatException e) {
                         needsToDownload = true;
