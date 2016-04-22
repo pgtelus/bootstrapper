@@ -1,4 +1,4 @@
-package com.samczsun.helios.bootstrapper;
+package com.heliosdecompiler.bootstrapper;
 
 import javax.swing.*;
 import java.io.ByteArrayOutputStream;
@@ -40,7 +40,9 @@ class UpdaterTask implements Runnable {
                 throw new IOException(connection.getResponseCode() + ": " + connection.getResponseMessage());
             }
         } catch (Throwable t) {
-            Bootstrapper.displayError(t);
+            if (Boolean.getBoolean("com.heliosdecompiler.isDebugging")) {
+                Bootstrapper.displayError(t);
+            }
         }
     }
 }

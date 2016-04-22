@@ -14,7 +14,7 @@
  *    limitations under the License.
  */
 
-package com.samczsun.helios.bootstrapper;
+package com.heliosdecompiler.bootstrapper;
 
 import com.eclipsesource.json.Json;
 import com.eclipsesource.json.JsonArray;
@@ -199,11 +199,13 @@ public class Bootstrapper {
 
                 byte[] data = loadSWTLibrary();
                 System.out.println("Loaded SWT Library");
-                int buildNumber = loadHelios();
-                System.out.println("Running Helios version " + buildNumber);
-                System.setProperty("com.heliosdecompiler.buildNumber", String.valueOf(buildNumber));
+                HeliosData heliosData = loadHelios();
+                System.out.println("Running Helios version " + heliosData.buildNumber);
 
-                new Thread(new UpdaterTask(buildNumber)).start();
+                System.setProperty("com.heliosdecompiler.buildNumber", String.valueOf(heliosData.buildNumber));
+                System.setProperty("com.heliosdecompiler.version", String.valueOf(heliosData.version));
+
+                new Thread(new UpdaterTask(heliosData.buildNumber)).start();
 
                 URL.setURLStreamHandlerFactory(protocol -> { //JarInJar!
                     if (protocol.equals("swt")) {
@@ -281,7 +283,7 @@ public class Bootstrapper {
 
             loop:
             while (true) {
-                int buildNumber = loadHelios();
+                int buildNumber = loadHelios().buildNumber;
                 int oldBuildNumber = buildNumber;
                 System.out.println("Current Helios version is " + buildNumber);
 
@@ -299,6 +301,8 @@ public class Bootstrapper {
                                     String name = artifact.get("fileName").asString();
                                     if (name.contains("helios-") && !name.contains(IMPLEMENTATION_VERSION)) {
                                         JOptionPane.showMessageDialog(null, "Bootstrapper is out of date. Patching cannot continue");
+                                        aborted = true;
+                                        break loop;
                                     }
                                 }
                                 URL url = new URL("https://ci.samczsun.com/job/Helios/" + buildNumber + "/artifact/target/delta.patch");
@@ -325,6 +329,7 @@ public class Bootstrapper {
                         } else {
                             JOptionPane.showMessageDialog(null, "Server returned response code " + con.getResponseCode() + " " + con.getResponseMessage() + "\nAborting patch process", null, JOptionPane.INFORMATION_MESSAGE);
                             aborted = true;
+                            break loop;
                         }
                     }
                 } else {
@@ -333,7 +338,7 @@ public class Bootstrapper {
             }
 
             if (!aborted) {
-                int buildNumber = loadHelios();
+                int buildNumber = loadHelios().buildNumber;
                 System.out.println("Running Helios version " + buildNumber);
                 JOptionPane.showMessageDialog(null, "Updated Helios to version " + buildNumber + "!");
                 Runtime.getRuntime().exec(new String[]{
@@ -356,10 +361,10 @@ public class Bootstrapper {
         }
     }
 
-    private static int loadHelios() throws IOException {
+    private static HeliosData loadHelios() throws IOException {
         System.out.println("Finding Helios implementation");
 
-        int buildNumber = -1;
+        HeliosData data = new HeliosData();
 
         boolean needsToDownload = !IMPL_FILE.exists();
         if (!needsToDownload) {
@@ -370,8 +375,11 @@ public class Bootstrapper {
                 } else {
                     Manifest manifest = new Manifest(jarFile.getInputStream(entry));
                     String ver = manifest.getMainAttributes().getValue("Implementation-Version");
+                    String versionString = manifest.getMainAttributes().getValue("Version");
                     try {
-                        buildNumber = Integer.parseInt(ver);
+                        data.buildNumber = Integer.parseInt(ver);
+                        data.version = Integer.parseInt(versionString);
+                        data.mainClass = manifest.getMainAttributes().getValue("Main-Class");
                     } catch (NumberFormatException e) {
                         needsToDownload = true;
                     }
@@ -453,7 +461,8 @@ public class Bootstrapper {
                 throw new IOException(connection.getResponseCode() + ": " + connection.getResponseMessage());
             }
         }
-        return buildNumber;
+
+        return data;
     }
 
     private static byte[] loadSWTLibrary() throws IOException, ReflectiveOperationException {
