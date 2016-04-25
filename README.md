@@ -7,7 +7,7 @@ The bootstrapper tries to account for every potential error to create a positive
 
 # Downloads
 
-The latest bootstrapper can be found [here](https://ci.samczsun.com/job/bootstrapper/lastSuccessfulBuild/artifact/target/bootstrapper-0.0.1-without-swt.jar). Although a download is available with SWT it is not recommended due to the larger filesize.
+The latest bootstrapper can be found [here](https://ci.samczsun.com/job/bootstrapper/).
 
 Make sure you update your bootstrapper often during the alpha stage as changes could be made which fix potential bugs and enhance the user experience.
 
