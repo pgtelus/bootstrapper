@@ -20,6 +20,7 @@ import com.eclipsesource.json.Json;
 import com.eclipsesource.json.JsonArray;
 import com.eclipsesource.json.JsonObject;
 import com.eclipsesource.json.JsonValue;
+import edu.rice.cs.util.ArgumentTokenizer;
 import net.dongliu.vcdiff.VcdiffDecoder;
 import net.dongliu.vcdiff.exception.VcdiffDecodeException;
 import org.apache.commons.cli.CommandLine;
@@ -54,12 +55,15 @@ import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.net.HttpURLConnection;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.net.URLConnection;
 import java.net.URLStreamHandler;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.security.CodeSource;
@@ -68,10 +72,13 @@ import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.StringJoiner;
+import java.util.StringTokenizer;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.jar.JarFile;
 import java.util.jar.Manifest;
+import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 
 public class Bootstrapper {
@@ -188,50 +195,70 @@ public class Bootstrapper {
             } else if (commandLine.hasOption("forceupdate")) {
                 forceUpdate();
             } else {
+//                boolean shouldStart = true;
+//                ServerSocket socket = null;
+//                try {
+//                    socket = new ServerSocket(21354);
+//                } catch (IOException e) {
+//                    shouldStart = false;
+//                } finally {
+//                    if (socket != null) {
+//                        socket.close();
+//                    }
+//                }
                 String[] forward = new String[0];
                 if (commandLine.hasOption("arg")) {
                     List<String> tmpargs = new ArrayList<>();
                     for (String arg : commandLine.getOptionValues("arg")) {
-                        tmpargs.addAll(Arrays.asList(arg.split(" ")));
+                        String unescaped = Utils.unescapeJavaString(arg);
+                        tmpargs.addAll(ArgumentTokenizer.tokenize(unescaped));
                     }
                     forward = tmpargs.toArray(new String[tmpargs.size()]);
                 }
 
-                byte[] data = loadSWTLibrary();
-                System.out.println("Loaded SWT Library");
-                HeliosData heliosData = loadHelios();
-                System.out.println("Running Helios version " + heliosData.buildNumber);
+//                if (shouldStart) {
+                    byte[] data = loadSWTLibrary();
+                    System.out.println("Loaded SWT Library");
+                    HeliosData heliosData = loadHelios();
+                    System.out.println("Running Helios version " + heliosData.buildNumber);
 
-                System.setProperty("com.heliosdecompiler.buildNumber", String.valueOf(heliosData.buildNumber));
-                System.setProperty("com.heliosdecompiler.version", String.valueOf(heliosData.version));
+                    System.setProperty("com.heliosdecompiler.buildNumber", String.valueOf(heliosData.buildNumber));
+                    System.setProperty("com.heliosdecompiler.version", String.valueOf(heliosData.version));
 
-                new Thread(new UpdaterTask(heliosData.buildNumber)).start();
+                    new Thread(new UpdaterTask(heliosData.buildNumber)).start();
 
-                URL.setURLStreamHandlerFactory(protocol -> { //JarInJar!
-                    if (protocol.equals("swt")) {
-                        return new URLStreamHandler() {
-                            protected URLConnection openConnection(URL u) {
-                                return new URLConnection(u) {
-                                    public void connect() {
-                                    }
+                    URL.setURLStreamHandlerFactory(protocol -> { //JarInJar!
+                        if (protocol.equals("swt")) {
+                            return new URLStreamHandler() {
+                                protected URLConnection openConnection(URL u) {
+                                    return new URLConnection(u) {
+                                        public void connect() {
+                                        }
 
-                                    public InputStream getInputStream() {
-                                        return new ByteArrayInputStream(data);
-                                    }
-                                };
-                            }
+                                        public InputStream getInputStream() {
+                                            return new ByteArrayInputStream(data);
+                                        }
+                                    };
+                                }
 
-                            protected void parseURL(URL u, String spec, int start, int limit) {
-                                // Don't parse or it's too slow
-                            }
-                        };
-                    }
-                    return null;
-                });
+                                protected void parseURL(URL u, String spec, int start, int limit) {
+                                    // Don't parse or it's too slow
+                                }
+                            };
+                        }
+                        return null;
+                    });
 
-                ClassLoader classLoader = new URLClassLoader(new URL[]{new URL("swt://load"), IMPL_FILE.toURI().toURL()});
-                Class<?> bootloader = Class.forName(heliosData.mainClass, false, classLoader);
-                bootloader.getMethod("main", String[].class).invoke(null, new Object[]{forward});
+                    ClassLoader classLoader = new URLClassLoader(new URL[]{new URL("swt://load"), IMPL_FILE.toURI().toURL()});
+                    Class<?> bootloader = Class.forName(heliosData.mainClass, false, classLoader);
+                    bootloader.getMethod("main", String[].class).invoke(null, new Object[]{forward});
+//                } else {
+//                    String message = Arrays.asList(forward).stream().collect(Collectors.joining(" "));
+//                    Socket clientSocket = new Socket("127.0.0.1", 21354);
+//                    clientSocket.getOutputStream().write(message.getBytes(StandardCharsets.UTF_8));
+//                    clientSocket.getOutputStream().close();
+//                    clientSocket.close();
+//                }
             }
         } catch (Throwable t) {
             displayError(t);
