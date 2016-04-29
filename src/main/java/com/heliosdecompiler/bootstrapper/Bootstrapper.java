@@ -20,7 +20,6 @@ import com.eclipsesource.json.Json;
 import com.eclipsesource.json.JsonArray;
 import com.eclipsesource.json.JsonObject;
 import com.eclipsesource.json.JsonValue;
-import edu.rice.cs.util.ArgumentTokenizer;
 import net.dongliu.vcdiff.VcdiffDecoder;
 import net.dongliu.vcdiff.exception.VcdiffDecodeException;
 import org.apache.commons.cli.CommandLine;
@@ -47,43 +46,36 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.net.HttpURLConnection;
-import java.net.ServerSocket;
-import java.net.Socket;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.net.URLConnection;
 import java.net.URLStreamHandler;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.security.CodeSource;
 import java.security.ProtectionDomain;
 import java.text.DecimalFormat;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.StringJoiner;
-import java.util.StringTokenizer;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.jar.JarFile;
 import java.util.jar.Manifest;
-import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 
 public class Bootstrapper {
     private static final String SWT_VERSION = "4.5.2";
-    private static final String IMPLEMENTATION_VERSION = "0.0.4";
+    private static final String IMPLEMENTATION_VERSION = "0.0.5";
 
     private static final File DATA_DIR = new File(System.getProperty("user.home") + File.separator + ".helios");
     private static final long MEGABYTE = 1024L * 1024L;
@@ -168,31 +160,24 @@ public class Bootstrapper {
     public static void main(String[] args) {
         Options options = new Options();
         options.addOption(
-                Option.builder("fu")
-                        .longOpt("forceupdate")
+                Option.builder("Xfu")
+                        .longOpt("Xforceupdate")
                         .desc("Force the patching process")
                         .build()
         );
         options.addOption(
-                Option.builder("a")
-                        .longOpt("arg")
-                        .hasArg()
-                        .desc("Pass on a command line argument to the implementation. More than one can be specified")
-                        .build()
-        );
-        options.addOption(
-                Option.builder("h")
-                        .longOpt("help")
+                Option.builder("Xh")
+                        .longOpt("Xhelp")
                         .desc("Help!")
                         .build()
         );
         CommandLineParser parser = new DefaultParser();
         try {
-            CommandLine commandLine = parser.parse(options, args);
-            if (commandLine.hasOption("help")) {
+            CommandLine commandLine = parser.parse(options, args, true);
+            if (commandLine.hasOption("Xhelp")) {
                 HelpFormatter formatter = new HelpFormatter();
                 formatter.printHelp("java -jar bootstrapper.jar", options);
-            } else if (commandLine.hasOption("forceupdate")) {
+            } else if (commandLine.hasOption("Xforceupdate")) {
                 forceUpdate();
             } else {
 //                boolean shouldStart = true;
@@ -206,52 +191,44 @@ public class Bootstrapper {
 //                        socket.close();
 //                    }
 //                }
-                String[] forward = new String[0];
-                if (commandLine.hasOption("arg")) {
-                    List<String> tmpargs = new ArrayList<>();
-                    for (String arg : commandLine.getOptionValues("arg")) {
-                        String unescaped = Utils.unescapeJavaString(arg);
-                        tmpargs.addAll(ArgumentTokenizer.tokenize(unescaped));
-                    }
-                    forward = tmpargs.toArray(new String[tmpargs.size()]);
-                }
 
 //                if (shouldStart) {
-                    byte[] data = loadSWTLibrary();
-                    System.out.println("Loaded SWT Library");
-                    HeliosData heliosData = loadHelios();
-                    System.out.println("Running Helios version " + heliosData.buildNumber);
+                String[] forward = commandLine.getArgs();
+                byte[] data = loadSWTLibrary();
+                System.out.println("Loaded SWT Library");
+                HeliosData heliosData = loadHelios();
+                System.out.println("Running Helios version " + heliosData.buildNumber);
 
-                    System.setProperty("com.heliosdecompiler.buildNumber", String.valueOf(heliosData.buildNumber));
-                    System.setProperty("com.heliosdecompiler.version", String.valueOf(heliosData.version));
+                System.setProperty("com.heliosdecompiler.buildNumber", String.valueOf(heliosData.buildNumber));
+                System.setProperty("com.heliosdecompiler.version", String.valueOf(heliosData.version));
 
-                    new Thread(new UpdaterTask(heliosData.buildNumber)).start();
+                new Thread(new UpdaterTask(heliosData.buildNumber)).start();
 
-                    URL.setURLStreamHandlerFactory(protocol -> { //JarInJar!
-                        if (protocol.equals("swt")) {
-                            return new URLStreamHandler() {
-                                protected URLConnection openConnection(URL u) {
-                                    return new URLConnection(u) {
-                                        public void connect() {
-                                        }
+                URL.setURLStreamHandlerFactory(protocol -> { //JarInJar!
+                    if (protocol.equals("swt")) {
+                        return new URLStreamHandler() {
+                            protected URLConnection openConnection(URL u) {
+                                return new URLConnection(u) {
+                                    public void connect() {
+                                    }
 
-                                        public InputStream getInputStream() {
-                                            return new ByteArrayInputStream(data);
-                                        }
-                                    };
-                                }
+                                    public InputStream getInputStream() {
+                                        return new ByteArrayInputStream(data);
+                                    }
+                                };
+                            }
 
-                                protected void parseURL(URL u, String spec, int start, int limit) {
-                                    // Don't parse or it's too slow
-                                }
-                            };
-                        }
-                        return null;
-                    });
+                            protected void parseURL(URL u, String spec, int start, int limit) {
+                                // Don't parse or it's too slow
+                            }
+                        };
+                    }
+                    return null;
+                });
 
-                    ClassLoader classLoader = new URLClassLoader(new URL[]{new URL("swt://load"), IMPL_FILE.toURI().toURL()});
-                    Class<?> bootloader = Class.forName(heliosData.mainClass, false, classLoader);
-                    bootloader.getMethod("main", String[].class).invoke(null, new Object[]{forward});
+                ClassLoader classLoader = new URLClassLoader(new URL[]{new URL("swt://load"), IMPL_FILE.toURI().toURL()});
+                Class<?> bootloader = Class.forName(heliosData.mainClass, false, classLoader);
+                bootloader.getMethod("main", String[].class).invoke(null, new Object[]{forward});
 //                } else {
 //                    String message = Arrays.asList(forward).stream().collect(Collectors.joining(" "));
 //                    Socket clientSocket = new Socket("127.0.0.1", 21354);
@@ -404,7 +381,7 @@ public class Bootstrapper {
                     String ver = manifest.getMainAttributes().getValue("Implementation-Version");
                     try {
                         data.buildNumber = Integer.parseInt(ver);
-                        data.version =  manifest.getMainAttributes().getValue("Version");
+                        data.version = manifest.getMainAttributes().getValue("Version");
                         data.mainClass = manifest.getMainAttributes().getValue("Main-Class");
                     } catch (NumberFormatException e) {
                         needsToDownload = true;
