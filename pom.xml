@@ -85,9 +85,6 @@
                             public static void main(java.lang.String[]);
                             }
                         </option>
-                        <option>
-                            -keep class org.eclipsesource.json.** { *; }
-                        </option>
                     </options>
                     <libs>
                         <lib>${java.home}/lib/rt.jar</lib>
