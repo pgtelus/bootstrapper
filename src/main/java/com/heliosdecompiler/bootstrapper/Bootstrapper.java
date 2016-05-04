@@ -46,13 +46,11 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.net.HttpURLConnection;
@@ -226,7 +224,7 @@ public class Bootstrapper {
                     return null;
                 });
 
-                ClassLoader classLoader = new URLClassLoader(new URL[]{new URL("swt://load"), IMPL_FILE.toURI().toURL()});
+                ClassLoader classLoader = new URLClassLoader(new URL[]{new URL("swt://load"), IMPL_FILE.toURI().toURL()}, null);
                 Class<?> bootloader = Class.forName(heliosData.mainClass, false, classLoader);
                 bootloader.getMethod("main", String[].class).invoke(null, new Object[]{forward});
 //                } else {
