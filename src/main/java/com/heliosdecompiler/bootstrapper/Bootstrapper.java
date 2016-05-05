@@ -38,14 +38,9 @@ import javax.swing.JProgressBar;
 import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
 import javax.swing.WindowConstants;
-import java.awt.Dimension;
 import java.awt.GridLayout;
-import java.awt.Toolkit;
-import java.awt.Window;
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -58,8 +53,6 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLClassLoader;
-import java.net.URLConnection;
-import java.net.URLStreamHandler;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.security.CodeSource;
@@ -72,8 +65,7 @@ import java.util.jar.Manifest;
 import java.util.zip.ZipEntry;
 
 public class Bootstrapper {
-    private static final String SWT_VERSION = "4.5.2";
-    private static final String IMPLEMENTATION_VERSION = "0.0.5";
+    private static final String IMPLEMENTATION_VERSION = "0.0.6";
 
     private static final File DATA_DIR = new File(System.getProperty("user.home") + File.separator + ".helios");
     private static final long MEGABYTE = 1024L * 1024L;
@@ -86,6 +78,7 @@ public class Bootstrapper {
     static {
         if (!DATA_DIR.exists() && !DATA_DIR.mkdirs()) {
             JOptionPane.showMessageDialog(null, "Error: Could not create data directory (" + DATA_DIR.getAbsolutePath() + ")");
+            System.exit(1);
             throw new RuntimeException();
         }
 
@@ -94,13 +87,9 @@ public class Bootstrapper {
         BOOTSTRAPPER_FILE = locateBootstrapperFile();
         System.getProperties().put("com.heliosdecompiler.bootstrapperFile", BOOTSTRAPPER_FILE);
 
-        try {
-            Manifest manifest = readManifestFromBootstrapper();
-            String swtVersion = manifest.getMainAttributes().getValue("SWT-Version");
+        try (InputStream inputStream = Bootstrapper.class.getResourceAsStream("/META-INF/MANIFEST.MF")) {
+            Manifest manifest = new Manifest(inputStream);
             String buildVersion = manifest.getMainAttributes().getValue("Implementation-Version");
-            if (swtVersion != null && !swtVersion.equals(SWT_VERSION)) {
-                throw new RuntimeException(String.format("SWT Versions do not match (Expected: %s, got %s)", swtVersion, SWT_VERSION));
-            }
             if (buildVersion != null && !buildVersion.equals(IMPLEMENTATION_VERSION)) {
                 throw new RuntimeException(String.format("Implementation Versions do not match (Expected: %s, got %s)", buildVersion, IMPLEMENTATION_VERSION));
             }
@@ -127,7 +116,6 @@ public class Bootstrapper {
         try {
             URI uri = url.toURI();
             File file = new File(uri.getPath());
-            System.out.println(file.getAbsolutePath());
             if (file.isDirectory()) {
                 if (!Boolean.getBoolean("com.heliosdecompiler.isDebugging")) {
                     JOptionPane.showMessageDialog(null, "Error: Could not locate Bootstrapper. (File is directory)");
@@ -146,12 +134,6 @@ public class Bootstrapper {
         } catch (URISyntaxException e) {
             JOptionPane.showMessageDialog(null, "Error: Could not locate Bootstrapper. (URISyntaxException)");
             throw new RuntimeException();
-        }
-    }
-
-    private static Manifest readManifestFromBootstrapper() throws IOException {
-        try (InputStream inputStream = Bootstrapper.class.getResourceAsStream("/META-INF/MANIFEST.MF")) {
-            return new Manifest(inputStream);
         }
     }
 
@@ -192,39 +174,16 @@ public class Bootstrapper {
 
 //                if (shouldStart) {
                 String[] forward = commandLine.getArgs();
-                byte[] data = loadSWTLibrary();
-                System.out.println("Loaded SWT Library");
                 HeliosData heliosData = loadHelios();
                 System.out.println("Running Helios version " + heliosData.buildNumber);
 
-                System.setProperty("com.heliosdecompiler.buildNumber", String.valueOf(heliosData.buildNumber));
-                System.setProperty("com.heliosdecompiler.version", String.valueOf(heliosData.version));
+                System.getProperties().put("com.heliosdecompiler.buildNumber", String.valueOf(heliosData.buildNumber));
+                System.getProperties().put("com.heliosdecompiler.version", String.valueOf(heliosData.version));
+                System.getProperties().put("com.heliosdecompiler.args", args);
 
                 new Thread(new UpdaterTask(heliosData.buildNumber)).start();
 
-                URL.setURLStreamHandlerFactory(protocol -> { //JarInJar!
-                    if (protocol.equals("swt")) {
-                        return new URLStreamHandler() {
-                            protected URLConnection openConnection(URL u) {
-                                return new URLConnection(u) {
-                                    public void connect() {
-                                    }
-
-                                    public InputStream getInputStream() {
-                                        return new ByteArrayInputStream(data);
-                                    }
-                                };
-                            }
-
-                            protected void parseURL(URL u, String spec, int start, int limit) {
-                                // Don't parse or it's too slow
-                            }
-                        };
-                    }
-                    return null;
-                });
-
-                ClassLoader classLoader = new URLClassLoader(new URL[]{new URL("swt://load"), IMPL_FILE.toURI().toURL()}, null);
+                ClassLoader classLoader = new URLClassLoader(new URL[]{IMPL_FILE.toURI().toURL()}, null);
                 Class<?> bootloader = Class.forName(heliosData.mainClass, false, classLoader);
                 bootloader.getMethod("main", String[].class).invoke(null, new Object[]{forward});
 //                } else {
@@ -243,34 +202,11 @@ public class Bootstrapper {
 
     private static void forceUpdate() throws IOException, VcdiffDecodeException {
         File backupFile = new File(DATA_DIR, "helios.jar.bak");
-        if (!IMPL_FILE.exists()) {
-            throw new RuntimeException("No Helios implementation found");
-        }
-        if (IMPL_FILE.isDirectory()) {
-            throw new RuntimeException("Helios implementation is directory");
-        }
-        if (!IMPL_FILE.canRead()) {
-            throw new RuntimeException("Read permissions denied for Helios implementation");
-        }
-        if (!IMPL_FILE.canWrite()) {
-            throw new RuntimeException("Write permissions denied for Helios implementation");
-        }
-        if (backupFile.exists()) {
-            if (!backupFile.canRead()) {
-                throw new RuntimeException("Read permissions denied for backup file");
-            }
-            if (!backupFile.canWrite()) {
-                throw new RuntimeException("Write permissions denied for backup file");
-            }
-            if (!backupFile.delete()) {
-                throw new RuntimeException("Could not delete backup file");
-            }
-        }
         try {
-            Files.copy(IMPL_FILE.toPath(), backupFile.toPath());
+            Files.copy(IMPL_FILE.toPath(), backupFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException exception) {
             // We're going to wrap it so end users know what went wrong
-            throw new IOException("Could not back up Helios implementation", exception);
+            throw new IOException(String.format("Could not back up Helios implementation (%s %s, %s %s)", IMPL_FILE.canRead(), IMPL_FILE.canWrite(), backupFile.canRead(), backupFile.canWrite()), exception);
         }
         URL latestVersion = new URL("https://ci.samczsun.com/job/Helios/lastStableBuild/buildNumber");
         HttpURLConnection connection = (HttpURLConnection) latestVersion.openConnection();
@@ -432,7 +368,7 @@ public class Bootstrapper {
                             frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
                             frame.setContentPane(panel);
                             frame.pack();
-                            centreWindow(frame);
+                            frame.setLocationRelativeTo(null);
                             frame.setVisible(true);
 
                             while (!stop.get()) {
@@ -468,111 +404,12 @@ public class Bootstrapper {
         return data;
     }
 
-    private static byte[] loadSWTLibrary() throws IOException, ReflectiveOperationException {
-        String name = getOSName();
-        if (name == null) throw new IllegalArgumentException("Cannot determine OS");
-        String arch = getArch();
-        if (arch == null) throw new IllegalArgumentException("Cannot determine architecture");
-
-        String artifactId = "org.eclipse.swt." + name + "." + arch;
-        String swtLocation = artifactId + "-" + SWT_VERSION + ".jar";
-
-        System.out.println("Loading SWT version " + swtLocation);
-
-        byte[] data = null;
-
-        File savedJar = new File(DATA_DIR, swtLocation);
-        if (savedJar.isDirectory() && !savedJar.delete())
-            throw new IllegalArgumentException("Saved file is a directory and could not be deleted");
-
-        if (savedJar.exists() && savedJar.canRead()) {
-            try {
-                System.out.println("Loading from saved file");
-                InputStream inputStream = new FileInputStream(savedJar);
-                ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-                copy(inputStream, outputStream);
-                data = outputStream.toByteArray();
-            } catch (IOException exception) {
-                System.out.println("Failed to load from saved file.");
-                exception.printStackTrace(System.out);
-            }
-        }
-        if (data == null) {
-            InputStream fromJar = Bootstrapper.class.getResourceAsStream("/swt/" + swtLocation);
-            if (fromJar != null) {
-                try {
-                    System.out.println("Loading from within JAR");
-                    ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-                    copy(fromJar, outputStream);
-                    data = outputStream.toByteArray();
-                } catch (IOException exception) {
-                    System.out.println("Failed to load within JAR");
-                    exception.printStackTrace(System.out);
-                }
-            }
-        }
-        if (data == null) {
-            URL url = new URL("https://maven-eclipse.github.io/maven/org/eclipse/swt/" + artifactId + "/" + SWT_VERSION + "/" + swtLocation);
-            try {
-                System.out.println("Loading over the internet");
-                HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-                if (connection.getResponseCode() == 200) {
-                    InputStream fromURL = connection.getInputStream();
-                    ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-                    copy(fromURL, outputStream);
-                    data = outputStream.toByteArray();
-                } else {
-                    throw new IOException(connection.getResponseCode() + ": " + connection.getResponseMessage());
-                }
-            } catch (IOException exception) {
-                System.out.println("Failed to load over the internet");
-                exception.printStackTrace(System.out);
-            }
-        }
-
-        if (data == null) {
-            throw new IllegalArgumentException("Failed to load SWT");
-        }
-
-        if (!savedJar.exists()) {
-            try {
-                System.out.println("Writing to saved file");
-                if (savedJar.createNewFile()) {
-                    FileOutputStream fileOutputStream = new FileOutputStream(savedJar);
-                    fileOutputStream.write(data);
-                    fileOutputStream.close();
-                } else {
-                    throw new IOException("Could not create new file");
-                }
-            } catch (IOException exception) {
-                JOptionPane.showMessageDialog(null, "Failed to save SWT to cache. If this persists please open a GitHub issue");
-                System.out.println("Failed to write to saved file");
-                exception.printStackTrace(System.out);
-            }
-        }
-        return data;
-    }
-
     static void displayError(Throwable t) {
         t.printStackTrace();
         StringWriter writer = new StringWriter();
         t.printStackTrace(new PrintWriter(writer));
         JOptionPane.showMessageDialog(null, writer.toString(), t.getClass().getSimpleName(),
                 JOptionPane.INFORMATION_MESSAGE);
-    }
-
-    private static String getArch() {
-        String arch = System.getProperty("sun.arch.data.model");
-        if (arch == null) arch = System.getProperty("com.ibm.vm.bitmode");
-        return "32".equals(arch) ? "x86" : "64".equals(arch) ? "x86_64" : null;
-    }
-
-    private static String getOSName() {
-        String unparsedName = System.getProperty("os.name").toLowerCase();
-        if (unparsedName.contains("win")) return "win32.win32";
-        if (unparsedName.contains("mac")) return "cocoa.macosx";
-        if (unparsedName.contains("linux")) return "gtk.linux";
-        return null;
     }
 
     static void copy(InputStream input, OutputStream output) throws IOException {
@@ -583,14 +420,7 @@ public class Bootstrapper {
         }
     }
 
-    private static String bytesToMeg(double bytes) {
+    static String bytesToMeg(double bytes) {
         return DECIMAL_FORMAT.format(bytes / MEGABYTE);
-    }
-
-    private static void centreWindow(Window frame) {
-        Dimension dimension = Toolkit.getDefaultToolkit().getScreenSize();
-        int x = (int) ((dimension.getWidth() - frame.getWidth()) / 2);
-        int y = (int) ((dimension.getHeight() - frame.getHeight()) / 2);
-        frame.setLocation(x, y);
     }
 }
