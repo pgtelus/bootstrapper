@@ -65,7 +65,7 @@ import java.util.jar.Manifest;
 import java.util.zip.ZipEntry;
 
 public class Bootstrapper {
-    private static final String IMPLEMENTATION_VERSION = "0.0.6";
+    private static final String IMPLEMENTATION_VERSION = "0.0.7";
 
     private static final File DATA_DIR = new File(System.getProperty("user.home") + File.separator + ".helios");
     private static final long MEGABYTE = 1024L * 1024L;
